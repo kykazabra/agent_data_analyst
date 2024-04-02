@@ -2,8 +2,9 @@ from langchain.memory import ConversationBufferWindowMemory, ConversationSummary
 from langchain_openai import ChatOpenAI
 from langchain.callbacks import FileCallbackHandler
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.agents import AgentAction, AgentFinish
 from langchain_experimental.agents import create_pandas_dataframe_agent
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import nbformat as nbf
 import json
 import pandas as pd
@@ -21,8 +22,11 @@ class NotebookOperator:
         with open(self.notebook_path, 'w') as f:
             nbf.write(self.nb, f)
 
-    def add_code_cell(self, code: str) -> None:
-        self.nb['cells'].append(nbf.v4.new_code_cell(code))
+    def add_code_cell(self, cell_code: str, cell_output: Optional[str] = None) -> None:
+        new_cell = nbf.v4.new_code_cell(cell_code)
+        if cell_output:
+            new_cell.outputs.append(nbf.v4.new_output(output_type='stream', text=cell_output))
+        self.nb['cells'].append(new_cell)
         self.refresh_notebook()
 
     def add_markdown_cell(self, text: str) -> None:
@@ -33,18 +37,19 @@ class NotebookOperator:
 class CodeCallbackHandler(BaseCallbackHandler):
     def __init__(self, notebook: NotebookOperator) -> None:
         self.notebook = notebook
+        self.cell_code = None
 
-    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs: Any) -> None:
+    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs: Any) -> Any:
         if serialized['name'] == 'python_repl_ast':
-            self.notebook.add_code_cell(input_str)
-            print('1')
+            self.cell_code = input_str
+
+    def on_tool_end(self, output: Any, **kwargs: Any) -> Any:
+        self.notebook.add_code_cell(self.cell_code, output)
 
 
 class DataAnalyst:
     def __init__(self, df_path: str, model: str = 'gpt-3.5-turbo', cred_path: str = 'credentials.json',
-                 log_path: str = 'agent_logs.log', notebook_path: str = 'agent_results.ipynb', logging: bool = True,
-                 notebook: bool = True) -> None:
-        self.df = self.read_data(df_path)
+                 log_path: str = 'agent_logs.log', notebook_path: str = 'agent_results.ipynb') -> None:
 
         with open(cred_path, 'r') as f:
             data = json.load(f)
@@ -65,14 +70,15 @@ class DataAnalyst:
                 base_url=base_url)
         )
 
-        self.callbacks = list()
+        self.agent_callbacks = list()
+        self.tool_callbacks = list()
 
-        if logging:
-            self.callbacks.append(FileCallbackHandler(log_path))
+        self.agent_callbacks.append(FileCallbackHandler(log_path))
 
-        if notebook:
-            self.notebook = NotebookOperator(notebook_path)
-            self.callbacks.append(CodeCallbackHandler(self.notebook))
+        self.notebook = NotebookOperator(notebook_path)
+        self.tool_callbacks.append(CodeCallbackHandler(self.notebook))
+
+        self.notebook.add_code_cell('import pandas as pd')
 
         prefix = """
         You are working with a pandas dataframe in Python. The name of the dataframe is `df`.
@@ -86,13 +92,16 @@ class DataAnalyst:
         {chat_history_buffer}
         """
 
+        self.df = self.read_data(df_path)
+
         self.agent = create_pandas_dataframe_agent(
             llm=self.agent_llm,
             df=self.df,
             prefix=prefix,
+            verbose=True,
             agent_executor_kwargs={
                 "memory": self.memory,
-                "callbacks": self.callbacks}
+                "callbacks": self.agent_callbacks}
         )
 
     @staticmethod
@@ -111,14 +120,15 @@ class DataAnalyst:
 
         return CombinedMemory(memories=[chat_history_buffer, chat_history_summary])
 
-    @staticmethod
-    def read_data(df_path: str) -> pd.DataFrame:
+    def read_data(self, df_path: str) -> pd.DataFrame:
         try:
             if df_path[-3:] == 'csv':
                 df = pd.read_csv(df_path, delimiter=';')
+                self.notebook.add_code_cell(f'df = pd.read_csv(r"{df_path}", delimiter=";")')
 
             elif df_path[-4:] == 'xlsx':
-                df = pd.read_csv(df_path)
+                df = pd.read_excel(df_path)
+                self.notebook.add_code_cell(f'df = pd.read_excel(r"{df_path}")')
 
             else:
                 raise TypeError('К сожалению, такой тип входных данных не поддерживается.')
@@ -130,13 +140,19 @@ class DataAnalyst:
         return df
 
     def talk(self, user_input: str) -> str:
-        if 'notebook' in self.__dict__.keys():
-            self.notebook.add_markdown_cell(user_input)
+        encoded = user_input.encode(encoding='cp1251', errors='strict')
+        self.notebook.add_markdown_cell(user_input)
 
-        reply = self.agent.invoke(user_input)['output']
+        reply = self.agent.invoke(
+            {
+                'input': user_input
+            },
+            {
+                "callbacks": self.tool_callbacks
+            }
+        )['output']
 
-        if 'notebook' in self.__dict__.keys():
-            self.notebook.add_markdown_cell(reply)
+        self.notebook.add_markdown_cell(reply)
 
         return reply
 

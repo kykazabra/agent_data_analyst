@@ -1,7 +1,7 @@
 from main import DataAnalyst
 
 a = DataAnalyst(
-    'data (1).csv'
+    r'C:\Users\CMD\PycharmProjects\agent_data_analyst\data (1).csv'
 )
 
 print(a.talk('Какие столбцы в датафрейме?'))
