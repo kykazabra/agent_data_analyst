@@ -1,0 +1,12 @@
+
+
+[1m> Entering new AgentExecutor chain...[0m
+[32;1m[1;3mThought: Мне нужно получить список всех столбцов в датафрейме.
+Action: Используем метод `columns` для получения списка столбцов.
+Action Input: df.columns[0m[32;1m[1;3mЯ должен использовать инструмент python_repl_ast для выполнения команды.
+Action: python_repl_ast
+Action Input: df.columns[0m[32;1m[1;3mЯ теперь знаю ответ на вопрос.
+
+Final Answer: Список столбцов в датафрейме: 'federal_district', 'federal_district_short', 'region_code', 'region_name', 'okato', 'id', 'name', 'name_short', 'year', 'e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e8', 'ege_budg', 'wos', 'scopus', 'rsci', 'rnd', 'total_income', 'square', 'phd_share', 'pps', 'rnd_private', 'pk'.[0m
+
+[1m> Finished chain.[0m

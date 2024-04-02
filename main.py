@@ -49,7 +49,8 @@ class CodeCallbackHandler(BaseCallbackHandler):
 
 class DataAnalyst:
     def __init__(self, df_path: str, model: str = 'gpt-3.5-turbo', cred_path: str = 'credentials.json',
-                 log_path: str = 'agent_logs.log', notebook_path: str = 'agent_results.ipynb') -> None:
+                 log_path: str = 'agent_logs.log', notebook_path: str = 'agent_results.ipynb',
+                 thoughts_to_notebook: bool = True) -> None:
 
         with open(cred_path, 'r') as f:
             data = json.load(f)
@@ -70,10 +71,12 @@ class DataAnalyst:
                 base_url=base_url)
         )
 
+        self.thoughts_to_notebook = thoughts_to_notebook
+
         self.agent_callbacks = list()
         self.tool_callbacks = list()
 
-        self.agent_callbacks.append(FileCallbackHandler(log_path))
+        self.agent_callbacks.append(FileCallbackHandler(log_path, mode='w'))
 
         self.notebook = NotebookOperator(notebook_path)
         self.tool_callbacks.append(CodeCallbackHandler(self.notebook))
@@ -140,8 +143,9 @@ class DataAnalyst:
         return df
 
     def talk(self, user_input: str) -> str:
-        encoded = user_input.encode(encoding='cp1251', errors='strict')
-        self.notebook.add_markdown_cell(user_input)
+        if self.thoughts_to_notebook:
+            user_input_enc = bytes(user_input, 'utf-8').decode('cp1251')
+            self.notebook.add_markdown_cell(user_input_enc)
 
         reply = self.agent.invoke(
             {
@@ -152,7 +156,9 @@ class DataAnalyst:
             }
         )['output']
 
-        self.notebook.add_markdown_cell(reply)
+        if self.thoughts_to_notebook:
+            reply_enc = bytes(reply, 'utf-8').decode('cp1251')
+            self.notebook.add_markdown_cell(reply_enc)
 
         return reply
 
