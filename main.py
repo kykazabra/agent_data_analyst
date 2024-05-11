@@ -1,14 +1,16 @@
+# -*- coding: utf-8 -*-
+
 from langchain.memory import ConversationBufferWindowMemory, ConversationSummaryMemory, CombinedMemory
 from langchain_openai import ChatOpenAI
 from langchain.callbacks import FileCallbackHandler
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.agents import AgentAction, AgentFinish
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from typing import Dict, Any, Optional
 import nbformat as nbf
 import json
 import pandas as pd
 import os
+import re
 
 
 class NotebookOperator:
@@ -19,7 +21,7 @@ class NotebookOperator:
         self.nb = nbf.v4.new_notebook()
 
     def refresh_notebook(self) -> None:
-        with open(self.notebook_path, 'w') as f:
+        with open(self.notebook_path, 'w', encoding='utf-8') as f:
             nbf.write(self.nb, f)
 
     def add_code_cell(self, cell_code: str, cell_output: Optional[str] = None) -> None:
@@ -42,15 +44,18 @@ class CodeCallbackHandler(BaseCallbackHandler):
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs: Any) -> Any:
         if serialized['name'] == 'python_repl_ast':
             self.cell_code = input_str
+        else:
+            self.cell_code = None
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> Any:
-        self.notebook.add_code_cell(self.cell_code, output)
+        if self.cell_code is not None:
+            self.notebook.add_code_cell(self.cell_code, output)
 
 
 class DataAnalyst:
     def __init__(self, df_path: str, model: str = 'gpt-3.5-turbo', cred_path: str = 'credentials.json',
                  log_path: str = 'agent_logs.log', notebook_path: str = 'agent_results.ipynb',
-                 thoughts_to_notebook: bool = True) -> None:
+                 thoughts_to_notebook: bool = True, verbose=True) -> None:
 
         with open(cred_path, 'r') as f:
             data = json.load(f)
@@ -67,7 +72,7 @@ class DataAnalyst:
         self.memory = self.prepare_memory(
             llm=ChatOpenAI(
                 openai_api_key=openai_api_key,
-                model_name=model,
+                model_name='gpt-3.5-turbo',
                 base_url=base_url)
         )
 
@@ -101,10 +106,12 @@ class DataAnalyst:
             llm=self.agent_llm,
             df=self.df,
             prefix=prefix,
-            verbose=True,
+            verbose=verbose,
             agent_executor_kwargs={
                 "memory": self.memory,
-                "callbacks": self.agent_callbacks}
+                "callbacks": self.agent_callbacks,
+                "handle_parsing_errors": True},
+            max_iterations=5
         )
 
     @staticmethod
@@ -137,15 +144,20 @@ class DataAnalyst:
                 raise TypeError('К сожалению, такой тип входных данных не поддерживается.')
 
         except pd.errors.ParserError:
-            print('Ошибка в чтении данных. Возможно, формат вашего файла не соответствует ожидаемому.')
-            raise
+            raise('Ошибка в чтении данных. Возможно, формат вашего файла не соответствует ожидаемому.')
 
         return df
 
     def talk(self, user_input: str) -> str:
         if self.thoughts_to_notebook:
+            # user_input = re.sub(r'[А-Яа-я]', 'R', user_input)
+            #
+            if 'И' in user_input:
+                user_input = user_input.replace('И', 'и')
+
             user_input_enc = bytes(user_input, 'utf-8').decode('cp1251')
-            self.notebook.add_markdown_cell(user_input_enc)
+
+            self.notebook.add_markdown_cell(user_input)
 
         reply = self.agent.invoke(
             {
@@ -157,8 +169,13 @@ class DataAnalyst:
         )['output']
 
         if self.thoughts_to_notebook:
+            # reply = re.sub(r'[А-Яа-я]', 'R', reply)
+
+            if 'И' in reply:
+                reply = reply.replace('И', 'и')
+
             reply_enc = bytes(reply, 'utf-8').decode('cp1251')
-            self.notebook.add_markdown_cell(reply_enc)
+            self.notebook.add_markdown_cell(reply)
 
         return reply
 
